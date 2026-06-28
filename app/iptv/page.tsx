@@ -4,23 +4,59 @@
  * IPTV Page - Live TV channel viewer with M3U source management
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useIPTVStore } from '@/lib/store/iptv-store';
 import { IPTVSourceManager } from '@/components/iptv/IPTVSourceManager';
 import { IPTVChannelGrid } from '@/components/iptv/IPTVChannelGrid';
 import { IPTVPlayer } from '@/components/iptv/IPTVPlayer';
 import { Icons } from '@/components/ui/Icon';
 import { hasPermission, getSession } from '@/lib/store/auth-store';
+import { useRuntimeFeatures } from '@/components/RuntimeFeaturesProvider';
 import Link from 'next/link';
 import type { M3UChannel } from '@/lib/utils/m3u-parser';
 
 export default function IPTVPage() {
-  const { sources, cachedChannels, cachedGroups, cachedChannelsBySource, refreshSources, isLoading, lastRefreshed } = useIPTVStore();
+  const { iptvEnabled, restrictionSummary } = useRuntimeFeatures();
+  const { sources, cachedChannels, cachedChannelsBySource, refreshSources, isLoading } = useIPTVStore();
   const [activeChannel, setActiveChannel] = useState<M3UChannel | null>(null);
   const [showManager, setShowManager] = useState(false);
 
-  const canManageSources = hasPermission('source_management');
+  const canManageSources = hasPermission('iptv_source_management');
   const canAccessIPTV = hasPermission('iptv_access');
+  const canUseBuiltinSources = hasPermission('iptv_builtin_sources');
+  const visibleSources = useMemo(
+    () => sources.filter((source) => canUseBuiltinSources || source.kind !== 'builtin'),
+    [sources, canUseBuiltinSources]
+  );
+  const visibleSourceIds = useMemo(() => new Set(visibleSources.map((source) => source.id)), [visibleSources]);
+  const visibleChannels = useMemo(
+    () => cachedChannels.filter((channel) => !channel.sourceId || visibleSourceIds.has(channel.sourceId)),
+    [cachedChannels, visibleSourceIds]
+  );
+  const visibleGroups = useMemo(
+    () => Array.from(new Set(visibleChannels.map((channel) => channel.group).filter(Boolean))).sort() as string[],
+    [visibleChannels]
+  );
+  const visibleChannelsBySource = useMemo(
+    () =>
+      Object.fromEntries(
+        visibleSources
+          .map((source) => [source.id, cachedChannelsBySource[source.id]])
+          .filter(([, data]) => !!data)
+      ),
+    [visibleSources, cachedChannelsBySource]
+  );
+
+  // Auto-refresh on first load if we have sources but no cached channels
+  useEffect(() => {
+    if (!iptvEnabled) {
+      return;
+    }
+
+    if (sources.length > 0 && cachedChannels.length === 0 && !isLoading) {
+      refreshSources();
+    }
+  }, [iptvEnabled, sources.length, cachedChannels.length, isLoading, refreshSources]);
 
   // If auth is configured and user doesn't have iptv_access, show access denied
   if (!canAccessIPTV && getSession()) {
@@ -36,12 +72,20 @@ export default function IPTVPage() {
     );
   }
 
-  // Auto-refresh on first load if we have sources but no cached channels
-  useEffect(() => {
-    if (sources.length > 0 && cachedChannels.length === 0 && !isLoading) {
-      refreshSources();
-    }
-  }, [sources.length, cachedChannels.length, isLoading, refreshSources]);
+  if (!iptvEnabled) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[var(--bg-color)] bg-[image:var(--bg-image)]">
+        <div className="max-w-xl mx-auto px-6 py-8 text-center bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-[var(--radius-2xl)] shadow-[var(--shadow-sm)]">
+          <Icons.TV size={48} className="mx-auto mb-4 text-[var(--text-color-secondary)] opacity-40" />
+          <p className="text-[var(--text-color)] font-medium mb-2">当前部署已禁用 IPTV</p>
+          <p className="text-sm text-[var(--text-color-secondary)] mb-4">
+            {restrictionSummary}
+          </p>
+          <Link href="/" className="text-sm text-[var(--accent-color)] hover:underline">返回首页</Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
       <div className="min-h-screen bg-[var(--bg-color)] bg-[image:var(--bg-image)] bg-fixed">
@@ -65,7 +109,7 @@ export default function IPTVPage() {
                     直播
                   </h1>
                   <p className="text-sm text-[var(--text-color-secondary)]">
-                    {cachedChannels.length > 0 ? `${cachedChannels.length} 个频道` : 'IPTV 直播频道'}
+                    {visibleChannels.length > 0 ? `${visibleChannels.length} 个频道` : 'IPTV 直播频道'}
                   </p>
                 </div>
               </div>
@@ -101,12 +145,12 @@ export default function IPTVPage() {
           {!isLoading && (
             <div className="bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-[var(--radius-2xl)] shadow-[var(--shadow-sm)] p-6">
               <IPTVChannelGrid
-                channels={cachedChannels}
-                groups={cachedGroups}
+                channels={visibleChannels}
+                groups={visibleGroups}
                 onSelect={setActiveChannel}
                 activeChannel={activeChannel}
-                channelsBySource={cachedChannelsBySource}
-                sources={sources}
+                channelsBySource={visibleChannelsBySource}
+                sources={visibleSources}
               />
             </div>
           )}
@@ -117,10 +161,10 @@ export default function IPTVPage() {
           <IPTVPlayer
             channel={activeChannel}
             onClose={() => setActiveChannel(null)}
-            channels={cachedChannels}
+            channels={visibleChannels}
             onChannelChange={setActiveChannel}
-            channelsBySource={cachedChannelsBySource}
-            sources={sources}
+            channelsBySource={visibleChannelsBySource}
+            sources={visibleSources}
           />
         )}
       </div>

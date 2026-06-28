@@ -1,6 +1,14 @@
 import { useState, useEffect } from 'react';
-import { settingsStore, getDefaultPremiumSources, type SortOption, type SearchDisplayMode, type ProxyMode } from '@/lib/store/settings-store';
-import { premiumModeSettingsStore } from '@/lib/store/premium-mode-settings';
+import {
+    settingsStore,
+    getDefaultPremiumSources,
+    type SearchDisplayMode,
+    type ProxyMode,
+    type LocaleOption,
+    DEFAULT_SEEK_STEP_SECONDS,
+    normalizeSeekStepSeconds,
+} from '@/lib/store/settings-store';
+import { premiumModeSettingsStore, type ModeSettings } from '@/lib/store/premium-mode-settings';
 import type { VideoSource } from '@/lib/types';
 
 export function usePremiumSettingsPage() {
@@ -14,7 +22,9 @@ export function usePremiumSettingsPage() {
     const [searchDisplayMode, setSearchDisplayMode] = useState<SearchDisplayMode>('normal');
     const [fullscreenType, setFullscreenType] = useState<'auto' | 'native' | 'window'>('auto');
     const [proxyMode, setProxyMode] = useState<ProxyMode>('retry');
+    const [seekStepSeconds, setSeekStepSeconds] = useState(DEFAULT_SEEK_STEP_SECONDS);
     const [rememberScrollPosition, setRememberScrollPosition] = useState(true);
+    const [locale, setLocale] = useState<LocaleOption>('zh-CN');
 
     // Danmaku settings
     const [danmakuApiUrl, setDanmakuApiUrl] = useState('');
@@ -22,22 +32,38 @@ export function usePremiumSettingsPage() {
     const [danmakuFontSize, setDanmakuFontSize] = useState(20);
     const [danmakuDisplayArea, setDanmakuDisplayArea] = useState(0.5);
 
-    useEffect(() => {
-        // Sources come from main settings store
-        const settings = settingsStore.getSettings();
-        setPremiumSources(settings.premiumSources || []);
+    // Content filter
+    const [blockedCategories, setBlockedCategories] = useState<string[]>([]);
 
-        // Mode-specific settings come from premium mode settings store
-        const modeSettings = premiumModeSettingsStore.getSettings();
-        setRealtimeLatency(modeSettings.realtimeLatency);
-        setSearchDisplayMode(modeSettings.searchDisplayMode);
-        setFullscreenType(modeSettings.fullscreenType);
-        setProxyMode(modeSettings.proxyMode);
-        setRememberScrollPosition(modeSettings.rememberScrollPosition);
-        setDanmakuApiUrl(modeSettings.danmakuApiUrl);
-        setDanmakuOpacity(modeSettings.danmakuOpacity);
-        setDanmakuFontSize(modeSettings.danmakuFontSize);
-        setDanmakuDisplayArea(modeSettings.danmakuDisplayArea);
+    useEffect(() => {
+        const syncFromStores = () => {
+            const settings = settingsStore.getSettings();
+            const modeSettings = premiumModeSettingsStore.getSettings();
+
+            setPremiumSources(settings.premiumSources || []);
+            setLocale(settings.locale);
+            setBlockedCategories(settings.blockedCategories || []);
+
+            setRealtimeLatency(modeSettings.realtimeLatency);
+            setSearchDisplayMode(modeSettings.searchDisplayMode);
+            setFullscreenType(modeSettings.fullscreenType);
+            setProxyMode(modeSettings.proxyMode);
+            setSeekStepSeconds(modeSettings.seekStepSeconds);
+            setRememberScrollPosition(modeSettings.rememberScrollPosition);
+            setDanmakuApiUrl(modeSettings.danmakuApiUrl);
+            setDanmakuOpacity(modeSettings.danmakuOpacity);
+            setDanmakuFontSize(modeSettings.danmakuFontSize);
+            setDanmakuDisplayArea(modeSettings.danmakuDisplayArea);
+        };
+
+        syncFromStores();
+        const unsubscribeSettings = settingsStore.subscribe(syncFromStores);
+        const unsubscribePremiumSettings = premiumModeSettingsStore.subscribe(syncFromStores);
+
+        return () => {
+            unsubscribeSettings();
+            unsubscribePremiumSettings();
+        };
     }, []);
 
     // --- Source management (uses main settingsStore) ---
@@ -73,7 +99,7 @@ export function usePremiumSettingsPage() {
 
     // --- Premium mode settings helpers ---
 
-    const savePremiumModeSetting = (partial: Record<string, any>) => {
+    const savePremiumModeSetting = (partial: Partial<ModeSettings>) => {
         const current = premiumModeSettingsStore.getSettings();
         premiumModeSettingsStore.saveSettings({ ...current, ...partial });
     };
@@ -100,9 +126,22 @@ export function usePremiumSettingsPage() {
         savePremiumModeSetting({ proxyMode: mode });
     };
 
+    const handleSeekStepSecondsChange = (value: number) => {
+        const normalized = normalizeSeekStepSeconds(value);
+        setSeekStepSeconds(normalized);
+        savePremiumModeSetting({ seekStepSeconds: normalized });
+    };
+
     const handleRememberScrollPositionChange = (enabled: boolean) => {
         setRememberScrollPosition(enabled);
         savePremiumModeSetting({ rememberScrollPosition: enabled });
+    };
+
+    const handleLocaleChange = (newLocale: LocaleOption) => {
+        setLocale(newLocale);
+        // Locale is a global setting, save to main store
+        const currentSettings = settingsStore.getSettings();
+        settingsStore.saveSettings({ ...currentSettings, locale: newLocale });
     };
 
     // --- Danmaku settings handlers ---
@@ -128,6 +167,12 @@ export function usePremiumSettingsPage() {
         savePremiumModeSetting({ danmakuDisplayArea: value });
     };
 
+    const handleBlockedCategoriesChange = (categories: string[]) => {
+        setBlockedCategories(categories);
+        const currentSettings = settingsStore.getSettings();
+        settingsStore.saveSettings({ ...currentSettings, blockedCategories: categories });
+    };
+
     return {
         premiumSources,
         isAddModalOpen,
@@ -145,12 +190,16 @@ export function usePremiumSettingsPage() {
         searchDisplayMode,
         fullscreenType,
         proxyMode,
+        seekStepSeconds,
         rememberScrollPosition,
         handleRealtimeLatencyChange,
         handleSearchDisplayModeChange,
         handleFullscreenTypeChange,
         handleProxyModeChange,
+        handleSeekStepSecondsChange,
         handleRememberScrollPositionChange,
+        locale,
+        handleLocaleChange,
         // Danmaku settings
         danmakuApiUrl,
         handleDanmakuApiUrlChange,
@@ -160,5 +209,7 @@ export function usePremiumSettingsPage() {
         handleDanmakuFontSizeChange,
         danmakuDisplayArea,
         handleDanmakuDisplayAreaChange,
+        blockedCategories,
+        handleBlockedCategoriesChange,
     };
 }

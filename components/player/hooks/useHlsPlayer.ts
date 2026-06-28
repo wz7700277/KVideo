@@ -2,10 +2,12 @@ import { useEffect, useRef } from 'react';
 import Hls from 'hls.js';
 import { usePlayerSettings } from './usePlayerSettings';
 import { filterM3u8Ad } from '@/lib/utils/m3u8-utils';
+import { useRuntimeFeatures } from '@/components/RuntimeFeaturesProvider';
 
 interface UseHlsPlayerProps {
     videoRef: React.RefObject<HTMLVideoElement | null>;
     src: string;
+    isPremium?: boolean;
     autoPlay?: boolean;
     onAutoPlayPrevented?: (error: Error) => void;
     onError?: (message: string) => void;
@@ -14,12 +16,14 @@ interface UseHlsPlayerProps {
 export function useHlsPlayer({
     videoRef,
     src,
+    isPremium = false,
     autoPlay = false,
     onAutoPlayPrevented,
     onError
 }: UseHlsPlayerProps) {
     const hlsRef = useRef<Hls | null>(null);
-    const { adFilterMode, adKeywords } = usePlayerSettings();
+    const { adFilterMode, adKeywords } = usePlayerSettings(isPremium);
+    const { mediaProxyEnabled } = useRuntimeFeatures();
     const isAdFilterEnabled = adFilterMode !== 'off';
 
     useEffect(() => {
@@ -38,7 +42,10 @@ export function useHlsPlayer({
         // Check if HLS is supported natively (Safari, Mobile Chrome)
         const isNativeHlsSupported = video.canPlayType('application/vnd.apple.mpegurl');
 
-        if (Hls.isSupported()) {
+        // Check if MSE is available (required by HLS.js)
+        const isMSESupported = Hls.isSupported();
+
+        if (isMSESupported) {
 
             // Define custom loader class to intercept manifest loading
             // We use 'any' cast because default loader type might not be strictly exposed in all typings
@@ -75,9 +82,9 @@ export function useHlsPlayer({
                     lowLatencyMode: false,
 
                     // Buffer Settings
-                    maxBufferLength: 60,
-                    maxMaxBufferLength: 120,
-                    maxBufferSize: 60 * 1000 * 1000,
+                    maxBufferLength: 120,
+                    maxMaxBufferLength: 240,
+                    maxBufferSize: 120 * 1000 * 1000,
                     maxBufferHole: 0.5,
 
                     // Start with more buffer
@@ -109,7 +116,7 @@ export function useHlsPlayer({
                     levelLoadingTimeOut: 10000,
 
                     // Backbuffer
-                    backBufferLength: 30,
+                    backBufferLength: 90,
                 };
 
                 // Use custom loader if ad filtering is enabled
@@ -132,17 +139,30 @@ export function useHlsPlayer({
 
                 // Manifest Parsed Handler
                 hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                    // Check for HEVC
+                    // Filter HEVC levels: prefer H.264 for compatibility
                     if (hls) {
                         const levels = hls.levels;
                         if (levels && levels.length > 0) {
-                            const hasHEVC = levels.some(level =>
-                                level.videoCodec?.toLowerCase().includes('hev') ||
-                                level.videoCodec?.toLowerCase().includes('h265')
-                            );
+                            const h264Indices: number[] = [];
+                            let hasHEVC = false;
+                            levels.forEach((level, index) => {
+                                const codec = level.videoCodec?.toLowerCase() || '';
+                                if (codec.includes('hev') || codec.includes('h265') || codec.includes('hvc')) {
+                                    hasHEVC = true;
+                                } else {
+                                    h264Indices.push(index);
+                                }
+                            });
                             if (hasHEVC) {
-                                console.warn('[HLS] ⚠️ HEVC detected');
-                                onError?.('检测到 HEVC/H.265 编码，当前浏览器可能不支持');
+                                if (h264Indices.length > 0) {
+                                    // H.264 alternatives exist — lock to first H.264 level
+                                    console.info('[HLS] HEVC detected, using H.264 level for compatibility');
+                                    hls.currentLevel = h264Indices[0];
+                                } else {
+                                    // All levels are HEVC — warn user
+                                    console.warn('[HLS] ⚠️ All levels are HEVC, browser may not support');
+                                    onError?.('检测到 HEVC/H.265 编码，当前浏览器可能不支持');
+                                }
                             }
                         }
                     }
@@ -207,6 +227,9 @@ export function useHlsPlayer({
                         if (!res.ok) throw new Error(`HTTP ${res.status}`);
                         return await res.text();
                     } catch (e) {
+                        if (!mediaProxyEnabled) {
+                            throw e;
+                        }
                         console.warn(`[HLS Native] Fetch failed for ${url}, trying proxy...`, e);
                         const proxiedUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
                         const res = await fetch(proxiedUrl);
@@ -367,8 +390,32 @@ export function useHlsPlayer({
                 video.src = src;
             }
         } else {
-            console.error('[HLS] HLS not supported');
-            onError?.('当前浏览器不支持 HLS 视频播放');
+            // Neither MSE nor native HLS supported
+            // Try direct playback as last resort (works for mp4 and some browser WebView)
+            console.warn('[HLS] No MSE or native HLS support. Trying direct playback...');
+            video.src = src;
+
+            let directFailed = false;
+            const handleCanPlay = () => {
+                directFailed = false;
+            };
+            const handleError = () => {
+                if (directFailed) return;
+                directFailed = true;
+                if (!mediaProxyEnabled) {
+                    onError?.('当前浏览器不支持 HLS 视频播放。建议使用 Chrome、Edge 或 Safari 浏览器。');
+                    return;
+                }
+                // Try proxied URL as final attempt
+                const proxiedUrl = `/api/proxy?url=${encodeURIComponent(src)}`;
+                video.src = proxiedUrl;
+                video.addEventListener('error', () => {
+                    onError?.('当前浏览器不支持 HLS 视频播放。建议使用 Chrome、Edge 或 Safari 浏览器。');
+                }, { once: true });
+            };
+
+            video.addEventListener('canplay', handleCanPlay, { once: true });
+            video.addEventListener('error', handleError, { once: true });
         }
 
         return () => {
@@ -377,5 +424,5 @@ export function useHlsPlayer({
             }
             extraBlobs.forEach(url => URL.revokeObjectURL(url));
         };
-    }, [src, videoRef, autoPlay, onAutoPlayPrevented, onError, isAdFilterEnabled, adFilterMode, adKeywords]);
+    }, [src, videoRef, autoPlay, onAutoPlayPrevented, onError, isAdFilterEnabled, adFilterMode, adKeywords, mediaProxyEnabled]);
 }

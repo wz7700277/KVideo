@@ -1,5 +1,14 @@
 import { useState, useEffect } from 'react';
-import { settingsStore, getDefaultSources, type SortOption, type SearchDisplayMode, type ProxyMode } from '@/lib/store/settings-store';
+import {
+    settingsStore,
+    getDefaultSources,
+    type SortOption,
+    type SearchDisplayMode,
+    type ProxyMode,
+    type LocaleOption,
+    DEFAULT_SEEK_STEP_SECONDS,
+    normalizeSeekStepSeconds,
+} from '@/lib/store/settings-store';
 import type { VideoSource, SourceSubscription } from '@/lib/types';
 import {
     type ImportResult,
@@ -24,7 +33,10 @@ export function useSettingsPage() {
     const [searchDisplayMode, setSearchDisplayMode] = useState<SearchDisplayMode>('normal');
     const [fullscreenType, setFullscreenType] = useState<'auto' | 'native' | 'window'>('auto');
     const [proxyMode, setProxyMode] = useState<ProxyMode>('retry');
+    const [seekStepSeconds, setSeekStepSeconds] = useState(DEFAULT_SEEK_STEP_SECONDS);
     const [rememberScrollPosition, setRememberScrollPosition] = useState(true);
+    const [locale, setLocale] = useState<LocaleOption>('zh-CN');
+    const [videoTogetherEnabled, setVideoTogetherEnabled] = useState(false);
 
     // Danmaku settings
     const [danmakuApiUrl, setDanmakuApiUrl] = useState('');
@@ -32,20 +44,32 @@ export function useSettingsPage() {
     const [danmakuFontSize, setDanmakuFontSize] = useState(20);
     const [danmakuDisplayArea, setDanmakuDisplayArea] = useState(0.5);
 
+    // Content filter
+    const [blockedCategories, setBlockedCategories] = useState<string[]>([]);
+
     useEffect(() => {
-        const settings = settingsStore.getSettings();
-        setSources(settings.sources || []);
-        setSubscriptions(settings.subscriptions || []);
-        setSortBy(settings.sortBy);
-        setRealtimeLatency(settings.realtimeLatency);
-        setSearchDisplayMode(settings.searchDisplayMode);
-        setFullscreenType(settings.fullscreenType);
-        setProxyMode(settings.proxyMode);
-        setRememberScrollPosition(settings.rememberScrollPosition);
-        setDanmakuApiUrl(settings.danmakuApiUrl);
-        setDanmakuOpacity(settings.danmakuOpacity);
-        setDanmakuFontSize(settings.danmakuFontSize);
-        setDanmakuDisplayArea(settings.danmakuDisplayArea);
+        const syncFromStore = () => {
+            const settings = settingsStore.getSettings();
+            setSources(settings.sources || []);
+            setSubscriptions(settings.subscriptions || []);
+            setSortBy(settings.sortBy);
+            setRealtimeLatency(settings.realtimeLatency);
+            setSearchDisplayMode(settings.searchDisplayMode);
+            setFullscreenType(settings.fullscreenType);
+            setProxyMode(settings.proxyMode);
+            setSeekStepSeconds(settings.seekStepSeconds);
+            setRememberScrollPosition(settings.rememberScrollPosition);
+            setLocale(settings.locale);
+            setVideoTogetherEnabled(settings.videoTogetherEnabled);
+            setDanmakuApiUrl(settings.danmakuApiUrl);
+            setDanmakuOpacity(settings.danmakuOpacity);
+            setDanmakuFontSize(settings.danmakuFontSize);
+            setDanmakuDisplayArea(settings.danmakuDisplayArea);
+            setBlockedCategories(settings.blockedCategories || []);
+        };
+
+        syncFromStore();
+        return settingsStore.subscribe(syncFromStore);
     }, []);
 
     const handleSourcesChange = (newSources: VideoSource[]) => {
@@ -125,11 +149,11 @@ export function useSettingsPage() {
     const handleImportLink = (result: ImportResult, isSync: boolean = false): boolean => {
         try {
             // Merge normal sources
-            let updatedSources = mergeSources(sources, result.normalSources);
+            const updatedSources = mergeSources(sources, result.normalSources);
 
             // Merge premium sources if needed
             const currentSettings = settingsStore.getSettings();
-            let updatedPremiumSources = mergeSources(currentSettings.premiumSources, result.premiumSources);
+            const updatedPremiumSources = mergeSources(currentSettings.premiumSources, result.premiumSources);
 
             // Save everything
             settingsStore.saveSettings({
@@ -247,12 +271,40 @@ export function useSettingsPage() {
         });
     };
 
+    const handleSeekStepSecondsChange = (value: number) => {
+        const normalized = normalizeSeekStepSeconds(value);
+        setSeekStepSeconds(normalized);
+        const currentSettings = settingsStore.getSettings();
+        settingsStore.saveSettings({
+            ...currentSettings,
+            seekStepSeconds: normalized,
+        });
+    };
+
     const handleRememberScrollPositionChange = (enabled: boolean) => {
         setRememberScrollPosition(enabled);
         const currentSettings = settingsStore.getSettings();
         settingsStore.saveSettings({
             ...currentSettings,
             rememberScrollPosition: enabled,
+        });
+    };
+
+    const handleVideoTogetherEnabledChange = (enabled: boolean) => {
+        setVideoTogetherEnabled(enabled);
+        const currentSettings = settingsStore.getSettings();
+        settingsStore.saveSettings({
+            ...currentSettings,
+            videoTogetherEnabled: enabled,
+        });
+    };
+
+    const handleLocaleChange = (newLocale: LocaleOption) => {
+        setLocale(newLocale);
+        const currentSettings = settingsStore.getSettings();
+        settingsStore.saveSettings({
+            ...currentSettings,
+            locale: newLocale,
         });
     };
 
@@ -293,6 +345,15 @@ export function useSettingsPage() {
         });
     };
 
+    const handleBlockedCategoriesChange = (categories: string[]) => {
+        setBlockedCategories(categories);
+        const currentSettings = settingsStore.getSettings();
+        settingsStore.saveSettings({
+            ...currentSettings,
+            blockedCategories: categories,
+        });
+    };
+
     const handleRestoreDefaults = () => {
         const defaults = getDefaultSources();
         handleSourcesChange(defaults);
@@ -311,6 +372,9 @@ export function useSettingsPage() {
         sortBy,
         realtimeLatency,
         searchDisplayMode,
+        fullscreenType,
+        proxyMode,
+        seekStepSeconds,
         isAddModalOpen,
         isExportModalOpen,
         isImportModalOpen,
@@ -337,12 +401,15 @@ export function useSettingsPage() {
         handleEditSource,
         handleRealtimeLatencyChange,
         handleSearchDisplayModeChange,
-        fullscreenType,
         handleFullscreenTypeChange,
-        proxyMode,
         handleProxyModeChange,
+        handleSeekStepSecondsChange,
         rememberScrollPosition,
         handleRememberScrollPositionChange,
+        locale,
+        handleLocaleChange,
+        videoTogetherEnabled,
+        handleVideoTogetherEnabledChange,
         danmakuApiUrl,
         handleDanmakuApiUrlChange,
         danmakuOpacity,
@@ -351,5 +418,7 @@ export function useSettingsPage() {
         handleDanmakuFontSizeChange,
         danmakuDisplayArea,
         handleDanmakuDisplayAreaChange,
+        blockedCategories,
+        handleBlockedCategoriesChange,
     };
 }

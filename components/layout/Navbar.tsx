@@ -1,12 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { ThemeSwitcher } from '@/components/ThemeSwitcher';
+import { useSiteIcon } from '@/components/SiteIconProvider';
 import { Icons } from '@/components/ui/Icon';
 import { siteConfig } from '@/lib/config/site-config';
 import { getSession, clearSession, hasPermission, type AuthSession } from '@/lib/store/auth-store';
+import { useRuntimeFeatures } from '@/components/RuntimeFeaturesProvider';
 import { LogOut } from 'lucide-react';
 
 interface NavbarProps {
@@ -16,16 +18,20 @@ interface NavbarProps {
 
 export function Navbar({ onReset, isPremiumMode = false }: NavbarProps) {
     const settingsHref = isPremiumMode ? '/premium/settings' : '/settings';
-    const [session, setSessionState] = useState<AuthSession | null>(null);
-
-    useEffect(() => {
-        setSessionState(getSession());
-    }, []);
+    const favoritesHref = isPremiumMode ? '/premium/favorites' : '/favorites';
+    const [session] = useState<AuthSession | null>(() => getSession());
+    const { iptvEnabled } = useRuntimeFeatures();
+    const siteIconSrc = useSiteIcon();
 
     const handleLogout = () => {
-        clearSession();
-        // Navigate to root to clear search query params
-        window.location.href = '/';
+        fetch('/api/auth/session', { method: 'DELETE' })
+            .catch(() => {
+                // Best effort only.
+            })
+            .finally(() => {
+                clearSession();
+                window.location.href = '/';
+            });
     };
 
     return (
@@ -46,10 +52,11 @@ export function Navbar({ onReset, isPremiumMode = false }: NavbarProps) {
                         >
                             <div className="w-8 h-8 sm:w-10 sm:h-10 relative flex items-center justify-center flex-shrink-0">
                                 <Image
-                                    src="/icon.png"
+                                    src={siteIconSrc}
                                     alt={siteConfig.name}
                                     width={40}
                                     height={40}
+                                    unoptimized
                                     className="object-contain"
                                 />
                             </div>
@@ -61,7 +68,7 @@ export function Navbar({ onReset, isPremiumMode = false }: NavbarProps) {
 
                         <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
                             {/* IPTV Link - only show if user has iptv_access or no auth configured */}
-                            {hasPermission('iptv_access') && (
+                            {iptvEnabled && hasPermission('iptv_access') && (
                             <Link
                                 href="/iptv"
                                 className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-[var(--radius-full)] bg-[var(--glass-bg)] border border-[var(--glass-border)] text-[var(--text-color)] hover:bg-[color-mix(in_srgb,var(--accent-color)_10%,transparent)] transition-all duration-200 cursor-pointer"
@@ -81,9 +88,9 @@ export function Navbar({ onReset, isPremiumMode = false }: NavbarProps) {
                                             {session.name.charAt(0)}
                                         </div>
                                         <span className="text-[var(--text-color)] max-w-[60px] truncate">{session.name}</span>
-                                        {session.role === 'admin' && (
+                                        {(session.role === 'admin' || session.role === 'super_admin') && (
                                             <span className="px-1 py-0.5 bg-[var(--accent-color)]/10 text-[var(--accent-color)] rounded text-[10px] font-medium">
-                                                管理
+                                                {session.role === 'super_admin' ? '超管' : '管理'}
                                             </span>
                                         )}
                                     </div>
@@ -106,6 +113,14 @@ export function Navbar({ onReset, isPremiumMode = false }: NavbarProps) {
                             >
                                 <Icons.Github size={20} />
                             </a>
+                            <Link
+                                href={favoritesHref}
+                                className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-[var(--radius-full)] bg-[var(--glass-bg)] border border-[var(--glass-border)] text-[var(--text-color)] hover:bg-[color-mix(in_srgb,var(--accent-color)_10%,transparent)] transition-all duration-200 cursor-pointer"
+                                aria-label="我的收藏"
+                                data-focusable
+                            >
+                                <Icons.Heart size={20} />
+                            </Link>
                             <Link
                                 href={settingsHref}
                                 className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-[var(--radius-full)] bg-[var(--glass-bg)] border border-[var(--glass-border)] text-[var(--text-color)] hover:bg-[color-mix(in_srgb,var(--accent-color)_10%,transparent)] transition-all duration-200 cursor-pointer"

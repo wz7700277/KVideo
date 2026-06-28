@@ -11,6 +11,7 @@ import { FavoriteButton } from '@/components/favorites/FavoriteButton';
 
 import { Video } from '@/lib/types';
 import { parseVideoTitle } from '@/lib/utils/video';
+import type { ResolutionInfo } from '@/lib/hooks/useResolutionProbe';
 
 interface VideoCardProps {
     video: Video;
@@ -20,6 +21,8 @@ interface VideoCardProps {
     onCardClick: (e: React.MouseEvent, cardId: string, videoUrl: string) => void;
     isPremium?: boolean;
     latencies?: Record<string, number>;
+    resolution?: ResolutionInfo | null;
+    isProbing?: boolean;
 }
 
 export const VideoCard = memo<VideoCardProps>(({
@@ -29,7 +32,9 @@ export const VideoCard = memo<VideoCardProps>(({
     isActive,
     onCardClick,
     isPremium = false,
-    latencies = {}
+    latencies = {},
+    resolution,
+    isProbing = false,
 }) => {
     const displayLatency = latencies[video.source] ?? video.latency;
     return (
@@ -157,26 +162,24 @@ export const VideoCard = memo<VideoCardProps>(({
                     {/* Info */}
                     <div className="p-3 flex-1 flex flex-col">
                         {(() => {
-                            const { cleanTitle, quality } = parseVideoTitle(video.vod_name);
-                            // Visual priority: Quality from title tag, then vod_remarks
-                            const displayQuality = quality || video.vod_remarks;
+                            const { cleanTitle } = parseVideoTitle(video.vod_name);
 
                             return (
                                 <>
                                     <h4 className="font-semibold text-sm text-[var(--text-color)] line-clamp-2 min-h-[2.5rem] mb-1">
                                         {cleanTitle}
                                     </h4>
-                                    {displayQuality && (
-                                        <p className="text-xs text-[var(--text-color-secondary)] font-medium">
-                                            {displayQuality}
-                                        </p>
-                                    )}
-                                    {/* Hide remarks if it was used as quality to avoid duplication */}
-                                    {video.vod_remarks && video.vod_remarks !== displayQuality && (
-                                        <p className="text-xs text-[var(--text-color-secondary)] mt-1 line-clamp-1">
-                                            {video.vod_remarks}
-                                        </p>
-                                    )}
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                        {resolution ? (
+                                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold text-white ${resolution.color}`}>
+                                                {resolution.label}
+                                            </span>
+                                        ) : isProbing ? (
+                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold text-white/50 bg-gray-500/50 animate-pulse">
+                                                ...
+                                            </span>
+                                        ) : null}
+                                    </div>
                                     {video.vod_lang && (
                                         <p className="text-xs text-[var(--text-color-secondary)] mt-1">
                                             {video.vod_lang}
